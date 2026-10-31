@@ -533,3 +533,155 @@ class Dataset_Pred(Dataset):
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
+
+
+
+class Dataset_Synthetic(Dataset):
+
+    def __init__(
+        self,
+        root_path,
+        flag='train',
+        size=None,
+        features='M',
+        data_path=None,
+        target=None,
+        scale=True,
+        timeenc=0,
+        freq='h',
+    ):
+        # size [seq_len, label_len, pred_len]
+        if size is None:
+            self.seq_len = 24 * 4 * 4
+            self.label_len = 24 * 4
+            self.pred_len = 24 * 4
+        else:
+            self.seq_len = size[0]
+            self.label_len = size[1]
+            self.pred_len = size[2]
+
+        assert flag in ['train', 'val', 'test']
+
+        self.flag = flag
+        self.features = features
+        self.target = target
+        self.scale = scale
+        self.timeenc = timeenc
+        self.freq = freq
+
+        self.root_path = root_path
+        self.data_path = data_path
+
+        self.__read_data__()
+
+    def __read_data__(self):
+
+        self.scaler = StandardScaler()
+
+        data = np.load(
+            os.path.join(
+                self.root_path,
+                self.data_path,
+            ),
+            allow_pickle=True,
+        )
+
+        X = data["X"]
+
+        # X shape:
+        # (num_sequences, sequence_length, num_variates)
+
+        num_sequences, sequence_length, num_variates = X.shape
+
+        train_end = int(num_sequences * 0.70)
+        val_end = int(num_sequences * 0.85)
+
+        if self.flag == "train":
+            X = X[:train_end]
+
+        elif self.flag == "val":
+            X = X[train_end:val_end]
+
+        elif self.flag == "test":
+            X = X[val_end:]
+
+        if self.scale:
+            train_X = data["X"][:train_end]
+            self.scaler.fit(
+                train_X.reshape(
+                    -1,
+                    train_X.shape[-1],
+                )
+            )
+            X_2d = X.reshape(
+                -1,
+                X.shape[-1],
+            )
+            X_2d = self.scaler.transform(X_2d)
+            X = X_2d.reshape(X.shape)
+        self.sequence_length = sequence_length
+        self.data_x = X.reshape(
+            -1,
+            num_variates,
+        )
+        self.data_y = self.data_x
+
+        #
+        # Construct valid window starts
+        # so windows never span sequences.
+        #
+        self.indices = []
+        window_size = self.seq_len + self.pred_len
+
+        for seq_idx in range(X.shape[0]):
+            offset = seq_idx * sequence_length
+            max_start = (
+                sequence_length
+                - window_size
+                + 1
+            )
+            for start in range(max_start):
+                self.indices.append(
+                    offset + start
+                )
+
+    def __getitem__(self, index):
+        s_begin = self.indices[index]
+        s_end = s_begin + self.seq_len
+
+        r_begin = s_end - self.label_len
+        r_end = (
+            r_begin
+            + self.label_len
+            + self.pred_len
+        )
+        seq_x = self.data_x[s_begin:s_end]
+        seq_y = self.data_y[r_begin:r_end]
+
+        #
+        # Synthetic data has no calendar features.
+        #
+        seq_x_mark = np.zeros(
+            (self.seq_len, 1),
+            dtype=np.float32,
+        )
+        seq_y_mark = np.zeros(
+            (
+                self.label_len
+                + self.pred_len,
+                1,
+            ),
+            dtype=np.float32,
+        )
+        return (
+            seq_x,
+            seq_y,
+            seq_x_mark,
+            seq_y_mark,
+        )
+
+    def __len__(self):
+        return len(self.indices)
+
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)

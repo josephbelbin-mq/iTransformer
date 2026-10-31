@@ -9,6 +9,7 @@ import os
 import time
 import warnings
 import numpy as np
+from pathlib import Path
 
 warnings.filterwarnings('ignore')
 
@@ -162,19 +163,19 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     loss.backward()
                     model_optim.step()
 
-            print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
+            print("Epoch: {0} Training completed - calculating validation loss...".format(epoch + 1))
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
-            test_loss = self.vali(test_data, test_loader, criterion)
 
-            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
-                epoch + 1, train_steps, train_loss, vali_loss, test_loss))
+            print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f}".format(
+                epoch + 1, train_steps, train_loss, vali_loss))
             early_stopping(vali_loss, self.model, path)
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
 
             adjust_learning_rate(model_optim, epoch + 1, self.args)
+            print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
 
             # get_cka(self.args, setting, self.model, train_loader, self.device, epoch)
 
@@ -270,9 +271,23 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         f.write('\n')
         f.close()
 
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+        data_source = str((Path(self.args.root_path) / self.args.data_path).resolve())
+        dataset_name = Path(self.args.data_path).stem
+
+        np.savez_compressed(
+            os.path.join(folder_path, f"{dataset_name}_results.npz"),
+            data_source=data_source,
+            dataset_name = dataset_name,
+            setting=setting,
+            args=vars(self.args),
+            mae=mae,
+            mse=mse,
+            rmse=rmse,
+            mape=mape,
+            mspe=mspe,
+            preds=preds,
+            trues=trues,
+        )
 
         return
 

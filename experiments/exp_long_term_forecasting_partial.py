@@ -11,6 +11,8 @@ import warnings
 import pdb
 import numpy as np
 import random
+from pathlib import Path
+
 
 warnings.filterwarnings('ignore')
 
@@ -337,9 +339,21 @@ class Exp_Long_Term_Forecast_Partial(Exp_Basic):
         f.write('\n')
         f.close()
 
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+        data_source = str(Path(self.args.root_path, self.args.data_path).resolve())
+
+        np.savez_compressed(
+            folder_path + 'results.npz',
+            data_source=data_source,
+            setting=setting,
+            args=vars(self.args),
+            mae=mae,
+            mse=mse,
+            rmse=rmse,
+            mape=mape,
+            mspe=mspe,
+            preds=preds,
+            trues=trues,
+        )
 
         return
 
