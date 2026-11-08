@@ -195,10 +195,22 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
+        start = time.time()
 
         self.model.eval()
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
+                if i > 0 and i % 100 == 0:
+                            elapsed = time.time() - start
+                            sec_per_batch = elapsed / i
+                            remaining = sec_per_batch * (len(test_loader) - i)
+
+                            print(
+                                f"Testing {i}/{len(test_loader)} "
+                                f"({100*i/len(test_loader):.1f}%) "
+                                f"ETA {remaining/60:.1f} min"
+                            )
+
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
 
@@ -241,7 +253,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 preds.append(pred)
                 trues.append(true)
-                if i % 20 == 0:
+                if i % 20 == 0 and False:
                     input = batch_x.detach().cpu().numpy()
                     if test_data.scale and self.args.inverse:
                         shape = input.shape
