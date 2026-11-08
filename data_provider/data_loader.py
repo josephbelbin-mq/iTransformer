@@ -229,9 +229,57 @@ class Dataset_Custom(Dataset):
         cols.remove(self.target)
         cols.remove('date')
         df_raw = df_raw[['date'] + cols + [self.target]]
+        
+        
         num_train = int(len(df_raw) * 0.7)
         num_test = int(len(df_raw) * 0.2)
         num_vali = len(df_raw) - num_train - num_test
+
+        if self.set_type == 0:  # only once for train dataset
+        
+            import matplotlib.pyplot as plt
+
+            y = df_raw[self.target].values
+
+            plt.figure(figsize=(16, 5))
+            plt.plot(y, lw=0.8)
+            plt.axvline(num_train, color='g', linestyle='--', label='train/val')
+            plt.axvline(num_train + num_vali, color='r', linestyle='--', label='val/test')
+            plt.title(f'{self.target} over time')
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig('target_splits.png')
+
+            def persistence_mse(series, lag=96):
+                pred = series[:-lag]
+                true = series[lag:]
+                return ((pred - true) ** 2).mean()
+
+            print()
+            print("=== RAW TARGET STATS ===")
+            print("Train std:", np.std(y[:num_train]))
+            print("Val std:  ", np.std(y[num_train:num_train + num_vali]))
+            print("Test std: ", np.std(y[num_train + num_vali:]))
+
+            print("Train min/max:", np.min(y[:num_train]), np.max(y[:num_train]))
+            print("Val min/max:  ", np.min(y[num_train:num_train + num_vali]),
+                np.max(y[num_train:num_train + num_vali]))
+            print("Test min/max: ", np.min(y[num_train + num_vali:]),
+                np.max(y[num_train + num_vali:]))
+
+            print("Train persistence:", persistence_mse(y[:num_train]))
+            print("Val persistence:", persistence_mse(y[num_train:num_train + num_vali]))
+            print("Test persistence:", persistence_mse(y[num_train + num_vali:]))
+
+            s = pd.Series(y)
+
+            for lag in [1, 7, 30, 96, 365]:
+                print(
+                    lag,
+                    s.autocorr(lag=lag)
+                )
+
+            print()
         border1s = [0, num_train - self.seq_len, len(df_raw) - num_test - self.seq_len]
         border2s = [num_train, num_train + num_vali, len(df_raw)]
         border1 = border1s[self.set_type]
@@ -673,6 +721,197 @@ class Dataset_Synthetic(Dataset):
             ),
             dtype=np.float32,
         )
+        return (
+            seq_x,
+            seq_y,
+            seq_x_mark,
+            seq_y_mark,
+        )
+
+    def __len__(self):
+        return len(self.indices)
+
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)
+
+
+class Dataset_Beijing(Dataset):
+
+    def __init__(
+        self,
+        root_path,
+        flag='train',
+        size=None,
+        features='M',
+        data_path=None,
+        target=None,
+        scale=True,
+        timeenc=0,
+        freq='h',
+    ):
+
+        if size is None:
+            self.seq_len = 24 * 4 * 4
+            self.label_len = 24 * 4
+            self.pred_len = 24 * 4
+        else:
+            self.seq_len = size[0]
+            self.label_len = size[1]
+            self.pred_len = size[2]
+
+        assert flag in ['train', 'val', 'test']
+
+        self.flag = flag
+        self.features = features
+        self.target = target
+        self.scale = scale
+        self.timeenc = timeenc
+        self.freq = freq
+
+        self.root_path = root_path
+        self.data_path = data_path
+
+        self.__read_data__()
+
+    def __read_data__(self):
+
+        self.scaler = StandardScaler()
+
+        data = np.load(
+            os.path.join(
+                self.root_path,
+                self.data_path,
+            ),
+            allow_pickle=True,
+        )
+
+        segments = list(data["X"])
+
+        #
+        # Split by segment
+        #
+        num_segments = len(segments)
+
+        train_end = int(num_segments * 0.70)
+        val_end = int(num_segments * 0.85)
+
+        if self.flag == "train":
+            segments = segments[:train_end]
+
+        elif self.flag == "val":
+            segments = segments[train_end:val_end]
+
+        elif self.flag == "test":
+            segments = segments[val_end:]
+
+        #
+        # Fit scaler using TRAIN segments only
+        #
+        if self.scale:
+
+            train_segments = list(
+                data["X"][:train_end]
+            )
+
+            train_data = np.concatenate(
+                train_segments,
+                axis=0,
+            )
+
+            self.scaler.fit(train_data)
+
+            scaled_segments = []
+
+            for seg in segments:
+
+                scaled_segments.append(
+                    self.scaler.transform(seg)
+                )
+
+            segments = scaled_segments
+
+        self.num_variates = segments[0].shape[-1]
+
+        #
+        # Flatten for efficient indexing
+        #
+        self.data_x = np.concatenate(
+            segments,
+            axis=0,
+        )
+
+        self.data_y = self.data_x
+
+        #
+        # Build valid window starts.
+        #
+        self.indices = []
+
+        window_size = (
+            self.seq_len
+            + self.pred_len
+        )
+
+        offset = 0
+
+        for seg in segments:
+
+            seg_len = len(seg)
+
+            max_start = (
+                seg_len
+                - window_size
+                + 1
+            )
+
+            if max_start > 0:
+
+                for start in range(max_start):
+
+                    self.indices.append(
+                        offset + start
+                    )
+
+            offset += seg_len
+
+        print(
+            f"{self.flag}: "
+            f"{len(segments)} segments, "
+            f"{len(self.indices)} windows"
+        )
+
+    def __getitem__(self, index):
+
+        s_begin = self.indices[index]
+        s_end = s_begin + self.seq_len
+
+        r_begin = (
+            s_end - self.label_len
+        )
+
+        r_end = (
+            r_begin
+            + self.label_len
+            + self.pred_len
+        )
+
+        seq_x = self.data_x[s_begin:s_end]
+        seq_y = self.data_y[r_begin:r_end]
+
+        seq_x_mark = np.zeros(
+            (self.seq_len, 1),
+            dtype=np.float32,
+        )
+
+        seq_y_mark = np.zeros(
+            (
+                self.label_len
+                + self.pred_len,
+                1,
+            ),
+            dtype=np.float32,
+        )
+
         return (
             seq_x,
             seq_y,
